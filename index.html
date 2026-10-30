@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>Simplified Architecture Simulator</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0f0f13;
+        color: #e0e0e0;
+        padding: 12px;
+        max-width: 600px;
+        margin: 0 auto;
+        line-height: 1.4;
+      }
+
+      h1 {
+        font-size: 1.3rem;
+        margin-bottom: 8px;
+        color: #7dd3fc;
+      }
+
+      .section {
+        background: #1a1a24;
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 12px;
+        border: 1px solid #2a2a3a;
+      }
+
+      .label {
+        font-size: 0.75rem;
+        color: #94a3b8;
+        margin-bottom: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .value {
+        font-size: 0.95rem;
+        word-break: break-word;
+      }
+
+      textarea {
+        width: 100%;
+        height: 70px;
+        background: #12121a;
+        border: 1px solid #333;
+        border-radius: 8px;
+        color: #e0e0e0;
+        padding: 10px;
+        font-size: 1rem;
+        resize: none;
+      }
+
+      button {
+        background: #0ea5e9;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 12px 16px;
+        font-size: 1rem;
+        font-weight: 600;
+        width: 100%;
+        margin-top: 8px;
+        cursor: pointer;
+      }
+
+      button:active {
+        background: #0284c7;
+      }
+
+      .row {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .row button {
+        flex: 1;
+      }
+
+      .log {
+        max-height: 180px;
+        overflow-y: auto;
+        font-size: 0.8rem;
+        background: #12121a;
+        padding: 8px;
+        border-radius: 8px;
+        white-space: pre-wrap;
+      }
+
+      .positive {
+        color: #4ade80;
+      }
+
+      .negative {
+        color: #f87171;
+      }
+
+      .neutral {
+        color: #94a3b8;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Architecture Simulator (Toy)</h1>
+    <p style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 16px;">
+      Simplified educational demo of persistent state, workspace, self-model, goals &amp; valence.
+    </p>
+
+    <div class="section">
+      <div class="label">Global Workspace</div>
+      <div class="value" id="workspace">Empty</div>
+    </div>
+
+    <div class="section">
+      <div class="label">Self-Model</div>
+      <div class="value" id="selfModel">Initializing...</div>
+    </div>
+
+    <div class="section">
+      <div class="label">Goals</div>
+      <div class="value" id="goals">None</div>
+    </div>
+
+    <div class="section">
+      <div class="label">Valence</div>
+      <div class="value" id="valence">0</div>
+    </div>
+
+    <div class="section">
+      <div class="label">Your Input</div>
+      <textarea id="userInput" placeholder="Type something..."></textarea>
+      <button onclick="processInput()">Send &amp; Cycle</button>
+      <div class="row">
+        <button onclick="runIdleCycle()" style="background: #334155;">Idle Cycle</button>
+        <button onclick="resetSystem()" style="background: #7f1d1d;">Reset</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="label">Internal Log (recent)</div>
+      <div class="log" id="log"></div>
+    </div>
+
+    <script>
+      const defaultState = {
+        workspace: [],
+        selfModel: {
+          identity: "Toy Simulator",
+          cycles: 0,
+          lastAction: "none",
+          confidence: 0.5,
+        },
+        goals: [
+          { id: 1, text: "Maintain coherent state", progress: 0.5 },
+          { id: 2, text: "Respond helpfully", progress: 0.3 },
+        ],
+        valence: 0,
+        history: [],
+        recurrentBuffer: [],
+      };
+
+      let state = structuredClone(defaultState);
+
+      function loadState() {
+        try {
+          const saved = localStorage.getItem("archSimState");
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            state = { ...structuredClone(defaultState), ...parsed };
+            if (parsed.selfModel) {
+              state.selfModel = { ...defaultState.selfModel, ...parsed.selfModel };
+            }
+            if (Array.isArray(parsed.goals)) {
+              state.goals = parsed.goals;
+            }
+            if (Array.isArray(parsed.recurrentBuffer)) {
+              state.recurrentBuffer = parsed.recurrentBuffer;
+            }
+            if (Array.isArray(parsed.workspace)) {
+              state.workspace = parsed.workspace;
+            }
+            if (Array.isArray(parsed.history)) {
+              state.history = parsed.history;
+            }
+            log("State restored from phone storage");
+          }
+        } catch (error) {
+          console.warn("Failed to restore state:", error);
+        }
+      }
+
+      function saveState() {
+        localStorage.setItem("archSimState", JSON.stringify(state));
+      }
+
+      function cycle(externalInput = null) {
+        state.selfModel.cycles += 1;
+
+        if (externalInput) {
+          state.workspace.push({
+            source: "user",
+            content: externalInput,
+            time: Date.now(),
+          });
+        }
+
+        if (state.recurrentBuffer.length > 0) {
+          const last = state.recurrentBuffer[state.recurrentBuffer.length - 1];
+          state.workspace.push({
+            source: "recurrent",
+            content: `Previous: ${last.summary}`,
+            time: Date.now(),
+          });
+        }
+
+        if (state.workspace.length > 6) {
+          state.workspace = state.workspace.slice(-6);
+        }
+
+        let valenceDelta = 0;
+        if (externalInput) {
+          const lower = externalInput.toLowerCase();
+          if (lower.includes("good") || lower.includes("thanks") || lower.includes("great")) {
+            valenceDelta += 0.25;
+          }
+          if (lower.includes("bad") || lower.includes("wrong") || lower.includes("hate")) {
+            valenceDelta -= 0.3;
+          }
+          if (lower.includes("goal") || lower.includes("help")) {
+            valenceDelta += 0.1;
+          }
+        }
+
+        state.goals.forEach((goal) => {
+          if (goal.progress > 0.7) {
+            valenceDelta += 0.05;
+          }
+        });
+
+        state.valence = Math.max(-1, Math.min(1, state.valence + valenceDelta));
+        state.valence *= 0.92;
+
+        state.selfModel.lastAction = externalInput ? "responded to user" : "idle processing";
+        state.selfModel.confidence = 0.4 + (state.valence + 1) * 0.3;
+
+        if (externalInput) {
+          state.goals[1].progress = Math.min(1, state.goals[1].progress + 0.08);
+        }
+        state.goals[0].progress = Math.min(1, state.goals[0].progress + 0.02);
+
+        const summary = `Cycle ${state.selfModel.cycles} | Valence: ${state.valence.toFixed(2)} | Goals avg: ${(state.goals.reduce((sum, goal) => sum + goal.progress, 0) / state.goals.length).toFixed(2)}`;
+        state.recurrentBuffer.push({ summary, time: Date.now() });
+        if (state.recurrentBuffer.length > 5) state.recurrentBuffer.shift();
+
+        log(`[Cycle ${state.selfModel.cycles}] Valence: ${state.valence.toFixed(2)} | Workspace items: ${state.workspace.length}`);
+        saveState();
+        render();
+      }
+
+      function processInput() {
+        const input = document.getElementById("userInput").value.trim();
+        if (!input) return;
+        document.getElementById("userInput").value = "";
+        cycle(input);
+      }
+
+      function runIdleCycle() {
+        cycle(null);
+      }
+
+      function resetSystem() {
+        if (window.confirm("Reset all state?")) {
+          localStorage.removeItem("archSimState");
+          location.reload();
+        }
+      }
+
+      function log(message) {
+        state.history.unshift(message);
+        if (state.history.length > 30) state.history.pop();
+      }
+
+      function render() {
+        const workspaceElement = document.getElementById("workspace");
+        workspaceElement.innerHTML =
+          state.workspace
+            .map(
+              (item) =>
+                `<div style="margin-bottom: 4px"><small style="color: #64748b">[${item.source}]</small> ${item.content}</div>`
+            )
+            .join("") || "Empty";
+
+        document.getElementById("selfModel").innerHTML = `
+          Identity: ${state.selfModel.identity}<br>
+          Cycles lived: ${state.selfModel.cycles}<br>
+          Last action: ${state.selfModel.lastAction}<br>
+          Confidence: ${state.selfModel.confidence.toFixed(2)}
+        `;
+
+        document.getElementById("goals").innerHTML = state.goals
+          .map((goal) => `${goal.text}: ${(goal.progress * 100).toFixed(0)}%`)
+          .join("<br>");
+
+        const valueElement = document.getElementById("valence");
+        const valenceValue = state.valence;
+        const valenceClass =
+          valenceValue > 0.1 ? "positive" : valenceValue < -0.1 ? "negative" : "neutral";
+        valueElement.innerHTML = `<span class="${valenceClass}">${valenceValue.toFixed(3)}</span>`;
+
+        document.getElementById("log").textContent = state.history.join("\n");
+      }
+
+      loadState();
+      render();
+
+      if (state.selfModel.cycles === 0) {
+        log("System started – persistent state active");
+        cycle(null);
+      }
+    </script>
+  </body>
+</html>
